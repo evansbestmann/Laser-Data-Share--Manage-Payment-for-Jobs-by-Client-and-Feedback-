@@ -1,0 +1,8 @@
+.gitignore
+
+**__pycache__
+
+.vscode
+db.mysql
+.env
+.Laser-Data-Share--Manage-Payment-for-Jobs-by-Client-and-Feedback-
