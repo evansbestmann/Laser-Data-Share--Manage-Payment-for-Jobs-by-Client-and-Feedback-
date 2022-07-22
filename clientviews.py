@@ -1,14 +1,14 @@
-import datetime
-import json
+#import datetime
+#import json
 from django.contrib import messages
-from django.core.files.storage import FileSystemStorage
+#from django.core.files.storage import FileSystemStorage
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, Http404, HttpRequest
 from django.shortcuts import render, redirect
-from django.urls import reverse
-from django.views.decorators.csrf import csrf_exempt
+#from django.urls import reverse
+#from django.views.decorators.csrf import csrf_exempt
 from django.urls import reverse
 from datetime import datetime as dt, timedelta as td
-from  pypaystack import Transaction,Customer,Plan
+#from  pypaystack import Transaction,Customer,Plan
 import pytz
 from .models import *
 #from .forms import PaymentFORM
@@ -21,12 +21,12 @@ def client_home(request):
     return render (request,"client_templates/client_home.html")
 
 def viewjob(request):
-    jobs = Dataset.objects.filter(client_id=request.user.id)
-    ongoing = Dataset.objects.filter(client_id=request.user.id, completed="ongoing")
-    complete = Dataset.objects.filter(client_id=request.user.id, completed="complete")
+    jobs = Dataset.objects.filter(client_id=request.user.id).order_by("-id")
+    Active = Dataset.objects.filter(client_id=request.user.id, completed="Active").order_by("-id")
+    Complete = Dataset.objects.filter(client_id=request.user.id, completed="Complete").order_by("-id")
     jc = jobs.count()
-    oc = ongoing.count()
-    cc = complete.count()
+    oc = Active.count()
+    cc = Complete.count()
     return render (request,"client_templates/viewjob.html",{"jc":jc,"oc": oc,"cc":cc,"jobs":jobs})
 
 def viewjobinfoclient(request, job_id):
@@ -50,17 +50,17 @@ def jobdownload(request):
         try:
             # job = Dataset.objects.get(slug=job_id)
             test = Dataset.objects.get(slug=slug).jobkey  ### collected the value of jobkey
-            print(test)
+            ##print(test)
             datecreated = Dataset.objects.get(slug=slug).created_at
             x = dt.now()
-            print(x)
+            #print(x)
             utc = pytz.UTC
             xcon = utc.localize(x)
             #0.000694
-            expiredate = datecreated + td(days=0.000694)
-            print(datecreated)
-            print(expiredate)
-            print(xcon)
+            expiredate = datecreated + td(days=0.00347)
+            ##print(datecreated)
+            ##print(expiredate)
+            ##print(xcon)
 
             if test == userkey:
                 if xcon < expiredate:
@@ -68,8 +68,8 @@ def jobdownload(request):
                 else:
                     return HttpResponseRedirect(reverse("payforjob", kwargs={"job_id": slug}))
             else:
-                messages.error(request, "Key is wrong")
-                return HttpResponseRedirect(reverse("jobkey", kwargs={"job_id": job_id}))
+                messages.error(request, "Job Key is wrong, type in correct Job Key and try again")
+                return HttpResponseRedirect(reverse("jobkey", kwargs={"job_id": slug}))
         except:
             return render(request, "client_templates/client_home.html")
 
@@ -78,9 +78,11 @@ def downloadjob(request,job_id):
     #cover = Dataset.objects.get(id=job_id).cover to get specific parameter in dataset class model
     return render(request, "client_templates/downloadjob.html",{"jobs": jobs, "slug": job_id})
 
+
+
 def payforjob(request, job_id):
     jobs = Dataset.objects.get(slug=job_id)
-    return render(request, "client_templates/payforjob.html",{"jobs": jobs, "id": job_id})
+    return render(request, "client_templates/payforjob.html",{"jobs": jobs, "slug": job_id})
 
 def transcation(request):
     if request.method != "POST":
@@ -96,22 +98,46 @@ def transcation(request):
         clientrep = Dataset.objects.get(id=job_id).clientrep
         jobstatus_id = Dataset.objects.get(id=job_id).jobstatus_id
         clientrepmail = Dataset.objects.get(id=job_id).clientrep_email
-        ### main mail
-        context = {"pvt_number": pvt_number, "amount": amount, "clientrep": clientrep,}
-        mail_temp = "client_templates/payjobemail_template.html"
-        mail_msg = render_to_string(mail_temp, context=context)
-        mail_from = "labinfo@laser-ng.com"
-        subject = "Laser Engineering posted a Report to you"
-        recipient = [clientrepmail]
-        mail = EmailMessage(subject, mail_msg, mail_from, recipient)
-        mail.content_subtype = 'html'
-        mail.send()
+        copiedemails = Dataset.objects.get(id=job_id).copiedemails
+        copiedemails1 = Dataset.objects.get(id=job_id).copiedemail1
+        copiedemails2 = Dataset.objects.get(id=job_id).copiedemails2
+        copiedemails3 = Dataset.objects.get(id=job_id).copiedemails3
+
         try:
             paymentset = Payment(job_id=job, email=email,amount=amount, slug=slug)
             paymentset.save()
+            try:
+                ### payment confirm client mail
+                context = {"pvt_number": pvt_number, "amount": amount, "clientrep": clientrep, }
+                mail_temp = "client_templates/payjobemail_template.html"
+                mail_msg = render_to_string(mail_temp, context=context)
+                mail_from = "labinfo@laser-ng.com"
+                subject = "Laser Engineering to recieve your Payment"
+                recipient = [clientrepmail,]
+                mail = EmailMessage(subject, mail_msg, mail_from, recipient)
+                mail.content_subtype = 'html'
+                mail.send()
+            except:
+                messages.error(request, "Make sure your internet is connected")
+                return HttpResponseRedirect(reverse("error"))
+            try:
+                ### payment confirm client mail
+                context = {"pvt_number": pvt_number, "amount": amount, "clientrep": clientrep, }
+                mail_temp = "client_templates/recievepaymentmail.html"
+                mail_msg = render_to_string(mail_temp, context=context)
+                mail_from = "labinfo@laser-ng.com"
+                subject = "Laser Engineering to receive Payment"
+                recipient = [copiedemails,copiedemails1,copiedemails2,copiedemails3]
+                mail = EmailMessage(subject, mail_msg, mail_from, recipient)
+                mail.content_subtype = 'html'
+                mail.send()
+            except:
+                messages.error(request, "Make sure your internet is connected")
+                return HttpResponseRedirect(reverse("error"))
             #return HttpResponseRedirect(reverse("downloadjob", kwargs={"job_id": job_id}))
             return render(request, "client_templates/makepayment.html", {"job":job,"paymentset":paymentset,"paystack_public_key":settings.PAYSTACK_PUBLIC_KEY,})
             #return (request,"makepayment.html",{"paymentset":paymentset,"paystack_public_key":settings.PAYSTACK_PUBLIC_KEY})
+
         except:
            return HttpResponseRedirect(reverse("payforjob",kwargs={"job_id":slug}))
 
@@ -164,7 +190,11 @@ def feedback_save(request):
         n5= int(staff_performance)
         n6= int(complaint_response)
         score = n1+n2+n3+n4+n5+n6
-        print(score)
+        copiedemails = Dataset.objects.get(id=job_id).copiedemails
+        copiedemails1 = Dataset.objects.get(id=job_id).copiedemail1
+        copiedemails2 = Dataset.objects.get(id=job_id).copiedemails2
+        copiedemails3 = Dataset.objects.get(id=job_id).copiedemails3
+        #print(score)
         try:
             job_id=Dataset.objects.get(id=job_id)
             feedback_model = FeedBackClient(job_id=job_id,client=client_id,address=address,descrition_of_service=service,
@@ -173,26 +203,43 @@ def feedback_save(request):
                                        rejected_services=rejected_services,rejected_services_comment=rejected_services_comment,pvt_number=job,
                                        comment=comment,laser_rep=laser_rep,client_rep=client_rep,client_rep_designation=client_rep_designation,created_at=date ,slug=slug)
             feedback_model.save()
-            messages.success(request, "Status edited successfully")
+            try:
+                ### payment confirm client mail
+                context = {"pvt_number": job_id, "clientrep": client_rep, }
+                mail_temp = "client_templates/feedbackemail_template.html"
+                mail_msg = render_to_string(mail_temp, context=context)
+                mail_from = "labinfo@laser-ng.com"
+                subject = "Laser Engineering Recieved Feedback"
+                recipient = [copiedemails,copiedemails1,copiedemails2,copiedemails3]
+                mail = EmailMessage(subject, mail_msg, mail_from, recipient)
+                mail.content_subtype = 'html'
+                mail.send()
+            except:
+                messages.error(request, "Make sure your internet is connected")
+                return HttpResponseRedirect(reverse("error"))
             return HttpResponseRedirect(reverse("viewjob"))
         except:
-            messages.error(request, "Failed to edit  Status")
+            messages.error(request, "Failed to send  Feedback")
             return HttpResponseRedirect(reverse( "jobfeedback",kwargs={"job_id": slug}))
 
 def completedjobs(request):
-    ongoing = Dataset.objects.filter(client_id=request.user.id,completed="ongoing")
-    complete = Dataset.objects.filter(client_id=request.user.id,completed="complete")
-    jobs = Dataset.objects.filter(client_id=request.user.id)
-    jc=jobs.count()
-    oc=ongoing.count()
-    cc=complete.count()
-    return render(request, "client_templates/clientcompletedjobs.html",{"jc":jc,"oc": oc,"cc":cc,"completedjobs":complete})
+    jobs = Dataset.objects.filter(client_id=request.user.id).order_by("-id")
+    Active = Dataset.objects.filter(client_id=request.user.id, completed="Active").order_by("-id")
+    Complete = Dataset.objects.filter(client_id=request.user.id, completed="Complete").order_by("-id")
+    jc = jobs.count()
+    oc = Active.count()
+    cc = Complete.count()
+    return render(request, "client_templates/clientcompletedjobs.html",{"jc":jc,"oc": oc,"cc":cc,"completedjobs":Complete})
 
 def ongoingjobs(request):
-    ongoing = Dataset.objects.filter(client_id=request.user.id, completed="ongoing")
-    complete = Dataset.objects.filter(client_id=request.user.id, completed="complete")
-    jobs = Dataset.objects.filter(client_id=request.user.id)
-    jc=jobs.count()
-    oc=ongoing.count()
-    cc=complete.count()
-    return render(request, "client_templates/clientongoingjobs.html",{"jc":jc,"oc": oc,"cc":cc,"ongoingjobs":ongoing})
+    jobs = Dataset.objects.filter(client_id=request.user.id).order_by("-id")
+    Active = Dataset.objects.filter(client_id=request.user.id, completed="Active").order_by("-id")
+    Complete = Dataset.objects.filter(client_id=request.user.id, completed="Complete").order_by("-id")
+    jc = jobs.count()
+    oc = Active.count()
+    cc = Complete.count()
+    return render(request, "client_templates/clientongoingjobs.html",{"jc":jc,"oc": oc,"cc":cc,"ongoingjobs":Active})
+
+def error(request,job_id):
+    return render(request, "client_templates/error.html")
+
