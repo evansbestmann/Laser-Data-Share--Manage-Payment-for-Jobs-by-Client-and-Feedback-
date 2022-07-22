@@ -1,20 +1,16 @@
-import datetime
+#import datetime
 import json
 from django.contrib import messages
-from django.core.files.storage import FileSystemStorage
+#from django.core.files.storage import FileSystemStorage
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
-from django.views.decorators.csrf import csrf_exempt
+#from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from django.core.mail import EmailMessage,send_mail
 from django.template.loader import render_to_string
-
-
-from .forms import *
-
+from mailjet_rest import Client
 from .models import *
-
 def admin_home(request):
     return render (request,"admin_templates/home_content.html")
 
@@ -28,15 +24,19 @@ def addclient_save(request):
         username= request.POST.get("username")
         email = request.POST.get("email")
         password = request.POST.get("password")
+        sentpassword = password
+        # print(sentpassword)
         address = request.POST.get("address")
         client_name = username
 
 
         try:
-            user=CustomUser.objects.create_user(username=username, password=password,email=email,user_type=2)
+            user=CustomUser.objects.create_user(username=username, password=password,email=email,sentpassword=sentpassword,user_type=2)
             user.client.address=address
+            user.client.sentpassword=sentpassword
             user.client.client_name = client_name
             user.save()
+            # print(user.client.sentpassword)
             messages.success(request,"client added successfully")
             return HttpResponseRedirect(reverse("addclient"))
         except:
@@ -44,7 +44,7 @@ def addclient_save(request):
             return HttpResponseRedirect(reverse("addclient"))
 
 def manageclient(request):
-    clients=Client.objects.all()
+    clients=Client.objects.all().order_by("-id")
     return render(request, "admin_templates/manageclient.html",{"clients":clients})
 
 def editclient(request, client_id):#as passed in url
@@ -62,11 +62,13 @@ def editclient_save(request):
         username = request.POST.get("username")
         email = request.POST.get("email")
         address = request.POST.get("address")
+        password = request.POST.get("password")
         client_name = username
-        print(username,client_name)
+        print(username,client_name,password)
         try:
             user = CustomUser.objects.get(id=client_id)
             user.username = username
+            user.password = password
             user.email = email
             user.save()
 
@@ -74,6 +76,7 @@ def editclient_save(request):
             client.address = address
             user.client.client_name = client_name
             client.save()
+            # print(user.password)
             #messages.success(request, "client Edited successfully")
             return HttpResponseRedirect(reverse("manageclient"))
         except:
@@ -102,7 +105,7 @@ def addfield_save(request):
             return HttpResponseRedirect(reverse("addfield"))
 
 def managefield(request):
-    fields=Fields.objects.all()
+    fields=Fields.objects.all().order_by("-id")
     return render(request, "admin_templates/managefield.html",{"fields":fields})
 
 def editfield(request, field_id):#as passed in url
@@ -154,7 +157,7 @@ def addlaserrep_save(request):
 
 
 def managelaserrep(request):
-    reps = LaserRep.objects.all()
+    reps = LaserRep.objects.all().order_by("-id")
     return render(request, "admin_templates/managereps.html", {"reps": reps})
 
 def editreps(request, rep_id):#as passed in url
@@ -204,7 +207,7 @@ def addjobstatus_save(request):
             return HttpResponseRedirect(reverse("addjobstatus"))
 
 def managejobstatus(request):
-    statuses=JobStatus.objects.all()
+    statuses=JobStatus.objects.all().order_by("-id")
     return render(request, "admin_templates/managejobstatus.html", {"statuses": statuses})
 
 def editjobstatus(request, status_id):#as passed in url
@@ -232,8 +235,9 @@ def addjob(request):
     statuses=JobStatus.objects.all()
     laserreps=LaserRep.objects.all()
     fields=Fields.objects.all()
+    passwordsent=Client.objects.all()
 
-    return render(request, "admin_templates/addjob.html", {"fields":fields,"clients":clients,"statuses":statuses,"laserreps":laserreps})
+    return render(request, "admin_templates/addjob.html", {"fields":fields,"clients":clients,"statuses":statuses,"laserreps":laserreps,"passwordsent":passwordsent})
 
 def getfields(request):
     client = json.loads(request.body)#here we get the body from our fetch api that was already converted to string  with json.stringify
@@ -253,49 +257,73 @@ def addjob_save(request):
         jobstatus = request.POST.get("status")
         laser_rep = request.POST.get("laser_rep")
         jobkey = request.POST.get("jobkey")
+        copiedemails = request.POST.get("copiedemails")
+        copiedemails1 = request.POST.get("copiedemails1")
+        copiedemails2 = request.POST.get("copiedemails2")
+        copiedemails3 = request.POST.get("copiedemails3")
         # if request.FILES.get('jobfile', False):
-        cover_file = request.FILES['cover']
         jobfile = request.FILES['jobfile']
         complete = request.POST.get("complete")
         client_id = CustomUser.objects.get(id=client)
         field_id = Fields.objects.get(id=field)
         jobstatus_id = JobStatus.objects.get(id=jobstatus)
         laser_rep_id = LaserRep.objects.get(id=laser_rep)
-
-        # send_mail("Laser Engineering posted a Report to you",
-        #    f"Hey {clientrep} Get Project on the Laser Engineering Client side with \nJob ID: {pvt_number},\nkey: {jobkey} \nHope we delivered this job to your satisfaction",
-        #           "labinfo@laser-ng.com",
-        #           [clientrepmail],
-        #           fail_silently=False)
-
-        context={"pvt_number":pvt_number,"jobkey":jobkey,"clientrep":clientrep,"jobstatus_id":jobstatus_id,}
-        mail_temp = "admin_templates/email_template.html"
-        mail_msg =  render_to_string(mail_temp,context=context)
-        mail_from = "labinfo@laser-ng.com"
-        subject = "Laser Engineering posted a Report to you"
-        recipient = [clientrepmail]
-        mail = EmailMessage(subject,mail_msg,mail_from,recipient)
-        mail.content_subtype = 'html'
-        mail.send()
+        clientemail = CustomUser.objects.get(id=client).email
+        clientpassword = CustomUser.objects.get(id=client).password
+        passwordsent = CustomUser.objects.get(id=client).sentpassword
+        # print(passwordsent)
+        #mail for client rep
 
         try:
-                job_model = Dataset(pvt_number=pvt_number,clientrep=clientrep, clientrep_email=clientrepmail,jobkey=jobkey, pdf=jobfile,cover=cover_file,
-                                    client_id = client_id,field_id = field_id,jobstatus = jobstatus_id,laserrep_id = laser_rep_id,completed=complete)
+            job_model = Dataset(pvt_number=pvt_number, clientrep=clientrep, clientrep_email=clientrepmail, jobkey=jobkey,
+                                pdf=jobfile, copiedemails=copiedemails,client_id=client_id, field_id=field_id, jobstatus=jobstatus_id, laserrep_id=laser_rep_id,
+                                completed=complete, copiedemail1=copiedemails1,copiedemails2=copiedemails2, copiedemails3=copiedemails3)
+            job_model.save()
+            try:
 
-                job_model.save()
-
-                messages.success(request, "Job added successfully")
+                context = {"pvt_number": pvt_number, "jobkey": jobkey, "clientrep": clientrep,
+                           "jobstatus_id": jobstatus_id, "clientemail": clientemail,"passwordsent":passwordsent}
+                mail_temp = "admin_templates/email_template.html"
+                mail_msg = render_to_string(mail_temp, context=context)
+                mail_from = "labinfo@laser-ng.com"
+                subject = "Laser Engineering posted a Report to you"
+                recipient = [clientrepmail]
+                mail = EmailMessage(subject, mail_msg, mail_from, recipient)
+                mail.content_subtype = 'html'
+                mail.send()
+            except:
+                messages.error(request, "Make sure your internet is connected")
                 return HttpResponseRedirect(reverse("addjob"))
+
+            # mail for copied mails
+            try:
+                context = {"pvt_number": pvt_number, "jobkey": jobkey, "clientrep": clientrep,
+                           "jobstatus_id": jobstatus_id,
+                           "clientemail": clientemail, "clientpassword": clientpassword, }
+                mail_temp = "admin_templates/emailcopied_template.html"
+                mail_msg = render_to_string(mail_temp, context=context)
+                mail_from = "labinfo@laser-ng.com"
+                subject = "Laser Engineering Notice for Report sent to Client representative"
+                recipient = [copiedemails, copiedemails1, copiedemails2, copiedemails3]
+                mail = EmailMessage(subject, mail_msg, mail_from, recipient)
+                mail.content_subtype = 'html'
+                mail.send()
+            except:
+                messages.error(request, "Make sure your internet is connected")
+                return HttpResponseRedirect(reverse("addjob"))
+            messages.success(request, "Job added successfully")
+            return HttpResponseRedirect(reverse("addjob"))
         except:
+            messages.error(request, "Job add Failed")
             return HttpResponseRedirect(reverse("addjob"))
 
 def managejob(request):
-    ongoing = Dataset.objects.filter(completed="ongoing")
-    complete = Dataset.objects.filter(completed="complete")
-    jobs = Dataset.objects.all()
+    Active = Dataset.objects.filter(completed="Active").order_by("-id")
+    Complete = Dataset.objects.filter(completed="Complete").order_by("-id")
+    jobs = Dataset.objects.all().order_by("-id")
     jc = jobs.count()
-    oc = ongoing.count()
-    cc = complete.count()
+    oc = Active.count()
+    cc = Complete.count()
 
     return render(request, "admin_templates/managejob.html", {"jc":jc,"oc": oc,"cc":cc,"jobs": jobs,})
 
@@ -337,10 +365,7 @@ def editjob_save(request):
             complete = request.POST.get("complete")
         else:
             complete = Dataset.objects.get(id=job_id).completed
-        if request.FILES.get('cover', False):
-           cover_file = request.FILES['cover']
-        else:
-           cover_file = Dataset.objects.get(id=job_id).cover
+        copiedemails= request.POST.get("copiedemails")
         if request.FILES.get('jobfile', False):
            jobfile = request.FILES['jobfile']
         else:
@@ -349,16 +374,43 @@ def editjob_save(request):
         field_id = Fields.objects.get(id=field)
         jobstatus_id = JobStatus.objects.get(id=jobstatus)
         laser_rep_id = LaserRep.objects.get(id=laser_rep)
+        clientemail = CustomUser.objects.get(id=client).email
+        clientpassword = CustomUser.objects.get(id=client).password
+        copiedemails = request.POST.get("copiedemails")
+        copiedemails1 = request.POST.get("copiedemails1")
+        copiedemails2 = request.POST.get("copiedemails2")
+        copiedemails3 = request.POST.get("copiedemails3")
         ####mail part
-        context = {"pvt_number": pvt_number, "jobkey": jobkey, "clientrep": clientrep, "jobstatus_id": jobstatus_id, }
-        mail_temp = "admin_templates/editjobemail_template.html"
-        mail_msg = render_to_string(mail_temp, context=context)
-        mail_from = "labinfo@laser-ng.com"
-        subject = "Laser Engineering posted a Report to you was updated"
-        recipient = [clientrepmail]
-        mail = EmailMessage(subject, mail_msg, mail_from, recipient)
-        mail.content_subtype = 'html'
-        mail.send()
+
+        ##mail for client rep
+        try:
+            context = {"pvt_number": pvt_number, "jobkey": jobkey, "clientrep": clientrep, "jobstatus_id": jobstatus_id,"clientemail":clientemail,"clientpassword":clientpassword, }
+            mail_temp = "admin_templates/editjobemail_template.html"
+            mail_msg = render_to_string(mail_temp, context=context)
+            mail_from = "labinfo@laser-ng.com"
+            subject = "Laser Engineering posted a Report to you was updated"
+            recipient = [clientrepmail]
+            mail = EmailMessage(subject, mail_msg, mail_from, recipient)
+            mail.content_subtype = 'html'
+            mail.send()
+        except:
+            messages.error(request, "Make sure your internet is connected")
+            return HttpResponseRedirect(reverse("editjob", kwargs={"job_id": job_id}))
+        # mail for copied mails
+        try:
+            context = {"pvt_number": pvt_number, "jobkey": jobkey, "clientrep": clientrep, "jobstatus_id": jobstatus_id,
+                       "clientemail": clientemail, "clientpassword": clientpassword, }
+            mail_temp = "admin_templates/emaileditcopied_template.html"
+            mail_msg = render_to_string(mail_temp, context=context)
+            mail_from = "labinfo@laser-ng.com"
+            subject = "Laser Engineering Notice for Report Update sent to Client representative"
+            recipient = [copiedemails, copiedemails1, copiedemails2, copiedemails3]
+            mail = EmailMessage(subject, mail_msg, mail_from, recipient)
+            mail.content_subtype = 'html'
+            mail.send()
+        except:
+            messages.error(request, "Make sure your internet is connected")
+            return HttpResponseRedirect(reverse("editjob", kwargs={"job_id": job_id}))
         try:
             job_model = Dataset.objects.get(id=job_id)
             job_model.pvt_number = pvt_number
@@ -366,13 +418,17 @@ def editjob_save(request):
             job_model.clientrep = clientrep
             job_model.clientrep_email = clientrepmail
             job_model.jobkey = jobkey
-            job_model.cover = cover_file
+            job_model.copiedemails = copiedemails
             job_model.pdf = jobfile
             job_model.client_id = client_id
             job_model.field_id = field_id
             job_model.jobstatus = jobstatus_id
             job_model.laserrep_id = laser_rep_id
             job_model.completed = complete
+            jobfile.copiedemails = copiedemails
+            job_model.copiedemail1=copiedemails1
+            job_model.copiedemails2=copiedemails2
+            job_model.copiedemails3=copiedemails3
             job_model.save()
             messages.success(request, "Job edited successfully")
             return HttpResponseRedirect(reverse("managejob"))
@@ -386,7 +442,7 @@ def viewjobinfo(request, job_id):
 
 
 def viewfeedback(request):
-    feedback = FeedBackClient.objects.all()
+    feedback = FeedBackClient.objects.all().order_by("-id")
     return render(request, "admin_templates/viewfeedback.html",{"fb": feedback})
 
 def viewfeedbackdetail(request,job_id):
@@ -394,19 +450,19 @@ def viewfeedbackdetail(request,job_id):
     return render(request, "admin_templates/viewfeedbackdetail.html", {"fb": feedback, "id": job_id})
 
 def completedjobs(request):
-    ongoing = Dataset.objects.filter(completed="ongoing")
-    complete = Dataset.objects.filter(completed="complete")
-    jobs = Dataset.objects.all()
+    Active = Dataset.objects.filter(completed="Active").order_by("-id")
+    Complete = Dataset.objects.filter(completed="Complete").order_by("-id")
+    jobs = Dataset.objects.all().order_by("-id")
     jc=jobs.count()
-    oc=ongoing.count()
-    cc=complete.count()
-    return render(request, "admin_templates/completedjobs.html",{"jc":jc,"oc": oc,"cc":cc,"completedjobs":complete})
+    oc=Active.count()
+    cc=Complete.count()
+    return render(request, "admin_templates/completedjobs.html",{"jc":jc,"oc": oc,"cc":cc,"Complete":Complete})
 
 def ongoingjobs(request):
-    ongoing = Dataset.objects.filter(completed="ongoing")
-    complete = Dataset.objects.filter(completed="complete")
-    jobs = Dataset.objects.all()
+    Active = Dataset.objects.filter(completed="Active").order_by("-id")
+    Complete = Dataset.objects.filter(completed="Complete").order_by("-id")
+    jobs = Dataset.objects.all().order_by("-id")
     jc=jobs.count()
-    oc=ongoing.count()
-    cc=complete.count()
-    return render(request, "admin_templates/ongoingjobs.html",{"jc":jc,"oc": oc,"cc":cc,"ongoingjobs":ongoing})
+    oc=Active.count()
+    cc=Complete.count()
+    return render(request, "admin_templates/ongoingjobs.html",{"jc":jc,"oc": oc,"cc":cc,"Active":Active})
